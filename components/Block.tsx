@@ -22,6 +22,8 @@ interface BlockProps {
   isDragOver: boolean
   dropPosition: 'before' | 'after' | null
   onOpenMenuForBlock: (blockId: string, position: { x: number; y: number }) => void
+  isSelected: boolean // Selection props enable clean UX with contextual controls
+  onSelect: () => void // Selection props enable clean UX with contextual controls
 }
 
 export function Block({
@@ -36,7 +38,9 @@ export function Block({
   isDragging,
   isDragOver,
   dropPosition,
-  onOpenMenuForBlock
+  onOpenMenuForBlock,
+  isSelected,
+  onSelect
 }: BlockProps) {
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false)
@@ -339,9 +343,19 @@ export function Block({
   }
 
   // Display mode rendering with drag-and-drop support
+  // Select block on click to show Edit/Delete buttons
+  const handleContainerClick = (e: React.MouseEvent) => {
+    // Don't auto-select when clicking inside content
+    if ((e.target as HTMLElement).isContentEditable) {
+      return
+    }
+    onSelect()
+  }
+
   return (
     <div
       ref={containerRef}
+      onClick={handleContainerClick}
       onDragOver={handleDragOverEvent}
       onDragLeave={handleDragLeaveEvent}
       onDrop={handleDropEvent}
@@ -372,14 +386,16 @@ export function Block({
           draggable
           onDragStart={handleDragStartEvent}
           onDragEnd={handleDragEndEvent}
+          onMouseDown={(e) => e.stopPropagation()}
           role="button"
           aria-label="Drag to reorder"
           tabIndex={0}
           className={`
-            flex-shrink-0 text-gray-400 hover:text-gray-600 select-none
+            flex-shrink-0 text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400 select-none
             cursor-grab active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 rounded
             transition-opacity duration-200
-            ${isDragging ? 'cursor-grabbing opacity-100' : 'opacity-0 group-hover:opacity-100'}
+            ${isDragging ? 'cursor-grabbing opacity-100' : ''}
+            ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
           `.trim()}
         >
           <span className="text-lg leading-none">⋮⋮</span>
@@ -387,21 +403,32 @@ export function Block({
 
         {/* Block content wrapper */}
         <div className="flex-1 min-w-0">
-          {/* Edit/Delete buttons */}
-          <div className="flex gap-2 mb-3">
-            <button
-              onClick={handleEdit}
-              className="px-3 py-1 bg-gray-200 text-gray-800 text-sm font-semibold rounded hover:bg-gray-300 transition-colors"
-            >
-              Edit
-            </button>
-            <button
-              onClick={() => onDelete(block.id)}
-              className="px-3 py-1 bg-red-100 text-red-700 text-sm font-semibold rounded hover:bg-red-200 transition-colors"
-            >
-              Delete
-            </button>
-          </div>
+          {/* Edit/Delete buttons only visible when block is selected */}
+          {isSelected && (
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onSelect()
+                  handleEdit()
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete(block.id)
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="px-3 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-sm font-semibold rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          )}
 
           {/* Block content rendering using discriminated union */}
           {/* Text blocks display with appropriate heading or paragraph styles */}

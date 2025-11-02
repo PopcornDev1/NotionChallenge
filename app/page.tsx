@@ -8,6 +8,7 @@ import { Block as BlockComponent } from '@/components/Block'
 import { Sidebar } from '@/components/Sidebar'
 import BlockMenu from '@/components/BlockMenu'
 import EmptyBlock from '@/components/EmptyBlock'
+import ImageModal from '@/components/ImageModal'
 import { generateBlockId } from '@/lib/client/uuid'
 
 export default function Home() {
@@ -36,6 +37,16 @@ export default function Home() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 })
   const [menuInsertPosition, setMenuInsertPosition] = useState<{ afterBlockId: string | null }>({ afterBlockId: null })
+
+  // Selection state for clean block UX - only one block selected at a time
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
+
+  // Image modal state for inline image block creation with dimension detection
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false)
+  const [imageModalContext, setImageModalContext] = useState<{ blockId: string | null; insertPosition: 'after' | 'bottom' }>({
+    blockId: null,
+    insertPosition: 'bottom'
+  })
 
   // Fetch pages on component mount
   useEffect(() => {
@@ -267,6 +278,9 @@ export default function Home() {
     setDragOverBlockId(null)
     setDropPosition(null)
 
+    // Clear selection after block operations for clean state
+    handleDeselectBlock()
+
     // Persist new order to server
     if (selectedPageId) {
       updatePageBlocks(selectedPageId, reorderedBlocks)
@@ -277,7 +291,7 @@ export default function Home() {
   const handleUpdateBlock = async (id: string, updates: Omit<Block, 'id'>): Promise<void> => {
     // Calculate updated blocks
     const updatedBlocks = blocks.map((block) =>
-      block.id === id ? { id, ...updates } : block
+      block.id === id ? { id, ...updates } as Block : block
     )
 
     // Update the selected page's blocks in pages state
@@ -290,6 +304,9 @@ export default function Home() {
   const handleDeleteBlock = async (id: string): Promise<void> => {
     // Calculate updated blocks with deleted block removed
     const updatedBlocks = blocks.filter((block) => block.id !== id)
+
+    // Clear selection after block operations for clean state
+    handleDeselectBlock()
 
     // Update the selected page's blocks in pages state
     if (selectedPageId) {
@@ -314,33 +331,73 @@ export default function Home() {
     setIsMenuOpen(false)
   }
 
+  // Opens ImageModal for image block creation, preserving insertion context
+  const handleOpenImageModal = (context: { blockId: string | null; insertPosition: 'after' | 'bottom' }) => {
+    setIsImageModalOpen(true)
+    setImageModalContext(context)
+  }
+
+  // Closes ImageModal and clears context
+  const handleCloseImageModal = () => {
+    setIsImageModalOpen(false)
+    setImageModalContext({ blockId: null, insertPosition: 'bottom' })
+  }
+
+  // Creates image block with user-provided URL and dimensions, inserts at correct position
+  const handleConfirmImageModal = async (url: string, width: number, height: number) => {
+    if (!selectedPageId) return
+
+    // Generate new block ID - client-generated, preserved by server
+    const newBlockId = generateBlockId()
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'image',
+      content: url,
+      styles: { width, height }
+    }
+
+    let updatedBlocks: Block[]
+    if (imageModalContext.insertPosition === 'bottom') {
+      // Insert at end (from EmptyBlock)
+      updatedBlocks = [...blocks, newBlock]
+    } else {
+      // Insert after specific block
+      const insertIndex = blocks.findIndex(b => b.id === imageModalContext.blockId)
+      if (insertIndex !== -1) {
+        updatedBlocks = [
+          ...blocks.slice(0, insertIndex + 1),
+          newBlock,
+          ...blocks.slice(insertIndex + 1)
+        ]
+      } else {
+        updatedBlocks = [...blocks, newBlock]
+      }
+    }
+
+    // Close modal immediately for better UX
+    handleCloseImageModal()
+
+    // Update local state and persist
+    await updatePageBlocks(selectedPageId, updatedBlocks)
+  }
+
   const handleSelectBlockType = (type: 'text' | 'image', variant?: 'h1' | 'h2' | 'h3' | 'paragraph') => {
     if (!selectedPageId) return
 
+    // Image blocks now go through ImageModal for dimension detection
+    if (type === 'image') {
+      handleCloseMenu() // Close BlockMenu first
+      handleOpenImageModal({ blockId: menuInsertPosition.afterBlockId, insertPosition: menuInsertPosition.afterBlockId === null ? 'bottom' : 'after' })
+      return
+    }
+
     const newBlockId = generateBlockId()
 
-    let newBlock: Block
-    if (type === 'text') {
-      newBlock = {
-        id: newBlockId,
-        type: 'text',
-        content: '',
-        styles: { variant: variant || 'paragraph' }
-      }
-    } else {
-      // For image, prompt for URL
-      const url = window.prompt('Enter image URL:')
-      if (!url || !url.trim()) {
-        setIsMenuOpen(false)
-        return
-      }
-
-      newBlock = {
-        id: newBlockId,
-        type: 'image',
-        content: url.trim(),
-        styles: { width: 600, height: 400 }
-      }
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'text',
+      content: '',
+      styles: { variant: variant || 'paragraph' }
     }
 
     // Insert block at the correct position
@@ -370,28 +427,41 @@ export default function Home() {
   const handleCreateBlockFromEmpty = (content: string, variant: 'h1' | 'h2' | 'h3' | 'paragraph' | 'image') => {
     if (!selectedPageId) return
 
+    // Image creation from EmptyBlock opens modal
+    if (variant === 'image') {
+      handleOpenImageModal({ blockId: null, insertPosition: 'bottom' })
+      return
+    }
+
     const newBlockId = generateBlockId()
 
-    let newBlock: Block
-    if (variant === 'image') {
-      // For image, use content as URL
-      newBlock = {
-        id: newBlockId,
-        type: 'image',
-        content: content,
-        styles: { width: 600, height: 400 }
-      }
-    } else {
-      newBlock = {
-        id: newBlockId,
-        type: 'text',
-        content: content,
-        styles: { variant }
-      }
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'text',
+      content: content,
+      styles: { variant }
     }
 
     const updatedBlocks = [...blocks, newBlock]
     updatePageBlocks(selectedPageId, updatedBlocks)
+  }
+
+  // Select block to show Edit/Delete buttons and border
+  const handleSelectBlock = (blockId: string) => {
+    setSelectedBlockId(blockId)
+  }
+
+  // Deselect block to hide controls and return to clean view
+  const handleDeselectBlock = () => {
+    setSelectedBlockId(null)
+  }
+
+  // Deselect block when clicking outside block area
+  const handleMainClick = (e: React.MouseEvent<HTMLElement>) => {
+    // Check if click is outside any block container
+    if (!(e.target as HTMLElement).closest('[data-block-container]')) {
+      handleDeselectBlock()
+    }
   }
 
   return (
@@ -409,7 +479,8 @@ export default function Home() {
 
       {/* Main content area */}
       <main
-        className={`flex-1 p-8 text-gray-900 ${isSidebarCollapsed ? 'ml-12' : 'ml-64'} transition-all duration-300 ease-in-out`}
+        onClick={handleMainClick}
+        className={`flex-1 p-8 text-gray-900 dark:text-notion-dark-textSoft ${isSidebarCollapsed ? 'ml-12' : 'ml-64'} transition-all duration-300 ease-in-out`}
       >
         {/* Dual loading states for pages and blocks */}
         {pagesLoading && (
@@ -471,21 +542,24 @@ export default function Home() {
                     {!loading && !error && (
                       <div className="flex flex-col gap-4">
                         {blocks.map((block) => (
-                          <BlockComponent
-                            key={block.id}
-                            block={block}
-                            onUpdate={handleUpdateBlock}
-                            onDelete={handleDeleteBlock}
-                            onDragStart={handleDragStart}
-                            onDragEnd={handleDragEnd}
-                            onDragOver={handleDragOver}
-                            onDragLeave={handleDragLeave}
-                            onDrop={handleDrop}
-                            isDragging={draggedBlockId === block.id}
-                            isDragOver={dragOverBlockId === block.id}
-                            dropPosition={dragOverBlockId === block.id ? dropPosition : null}
-                            onOpenMenuForBlock={handleOpenMenuForBlock}
-                          />
+                          <div key={block.id} data-block-container>
+                            <BlockComponent
+                              block={block}
+                              onUpdate={handleUpdateBlock}
+                              onDelete={handleDeleteBlock}
+                              onDragStart={handleDragStart}
+                              onDragEnd={handleDragEnd}
+                              onDragOver={handleDragOver}
+                              onDragLeave={handleDragLeave}
+                              onDrop={handleDrop}
+                              isDragging={draggedBlockId === block.id}
+                              isDragOver={dragOverBlockId === block.id}
+                              dropPosition={dragOverBlockId === block.id ? dropPosition : null}
+                              onOpenMenuForBlock={handleOpenMenuForBlock}
+                              isSelected={selectedBlockId === block.id}
+                              onSelect={() => handleSelectBlock(block.id)}
+                            />
+                          </div>
                         ))}
 
                         {/* Empty block placeholder for creating new content */}
@@ -504,11 +578,23 @@ export default function Home() {
       </main>
 
       {/* Block menu for inline creation */}
+      {/* Pass image selection handler to open ImageModal */}
       <BlockMenu
         isOpen={isMenuOpen}
         position={menuPosition}
         onSelectType={handleSelectBlockType}
+        onSelectImage={() => {
+          handleCloseMenu()
+          handleOpenImageModal({ blockId: menuInsertPosition.afterBlockId, insertPosition: menuInsertPosition.afterBlockId === null ? 'bottom' : 'after' })
+        }}
         onClose={handleCloseMenu}
+      />
+
+      {/* ImageModal for image block creation with URL input and dimension detection */}
+      <ImageModal
+        isOpen={isImageModalOpen}
+        onConfirm={handleConfirmImageModal}
+        onClose={handleCloseImageModal}
       />
     </div>
   )
