@@ -33,3 +33,12 @@ export interface ImageBlock extends BaseBlock {
 }
 
 export type Block = TextBlock | ImageBlock
+
+// Page type represents a container for blocks, similar to Notion's page structure
+// Each page has its own independent blocks array
+// This enables organizing content into separate pages with sidebar navigation
+export interface Page {
+  id: string
+  title: string
+  blocks: Block[]
+}
