@@ -3,7 +3,75 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Theme variables for light and dark modes
+   * These variables provide semantic color tokens that automatically switch
+   * when the 'dark' class is applied to the html element.
+   *
+   * Light mode (default):
+   * - Primary background: white
+   * - Primary text: dark gray
+   * - Sidebar: beige/off-white
+   * - Code blocks: beige/off-white
+   *
+   * Dark mode (.dark):
+   * - Primary background: #25272B (lighter gray)
+   * - Primary text: #E6E6E6 (soft white, ~90% opacity)
+   * - Sidebar: #2F3437 (darker gray)
+   * - Code blocks: #2F3437 (same as sidebar for consistency)
+   */
+  :root {
+    --bg-primary: #FFFFFF;
+    --text-primary: #37352F;
+    --sidebar: #F7F6F3;
+    --code: #F7F6F3;
+  }
+
+  .dark {
+    --bg-primary: #25272B;
+    --text-primary: #E6E6E6;
+    --sidebar: #2F3437;
+    --code: #2F3437;
+  }
+
   body {
     @apply transition-colors duration-200;
   }
+}
+
+/* Animation for smooth menu appearance */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.15s ease-out;
+}
+
+/* ContentEditable for inline typing */
+/* Enables inline text editing in display mode */
+[contentEditable="true"] {
+  caret-color: #3b82f6; /* Blue-500 */
+}
+
+[contentEditable="true"]:focus {
+  outline: none;
+}
+
+/* Placeholder text for empty contentEditable elements */
+[contentEditable="true"][data-placeholder]:empty:before {
+  content: attr(data-placeholder);
+  color: #9ca3af; /* Gray-400 */
+  pointer-events: none;
+}
+
+.dark [contentEditable="true"][data-placeholder]:empty:before {
+  color: #6b7280; /* Gray-500 for dark mode */
 }
