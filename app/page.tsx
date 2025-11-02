@@ -48,6 +48,11 @@ export default function Home() {
     insertPosition: 'bottom'
   })
 
+  // Page title editing state for inline renaming in main content area
+  const [isEditingPageTitle, setIsEditingPageTitle] = useState(false)
+  const [editingPageTitle, setEditingPageTitle] = useState('')
+  const [pageTitleError, setPageTitleError] = useState<string | null>(null)
+
   // Fetch pages on component mount
   useEffect(() => {
     const fetchPages = async () => {
@@ -115,6 +120,9 @@ export default function Home() {
     setError(null)
   }, [selectedPageId, pages])
 
+  // Helper to get selected page object
+  const selectedPage = pages.find((p) => p.id === selectedPageId)
+
   // Sidebar collapse handler
   const handleToggleSidebar = () => {
     const newState = !isSidebarCollapsed
@@ -163,6 +171,36 @@ export default function Home() {
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to create page')
+    }
+  }
+
+  // Handle page renaming from Sidebar with optimistic update and error rollback
+  const handleRenamePage = async (pageId: string, newTitle: string) => {
+    const previousPages = [...pages]
+
+    // Optimistically update local state
+    const updatedPages = pages.map((p) =>
+      p.id === pageId ? { ...p, title: newTitle } : p
+    )
+    setPages(updatedPages)
+
+    try {
+      const page = updatedPages.find((p) => p.id === pageId)
+      if (!page) throw new Error('Page not found')
+
+      const response = await fetch(`/api/pages/${pageId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(page)
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to rename page')
+      }
+    } catch (err) {
+      // Rollback on error
+      setPages(previousPages)
+      throw err
     }
   }
 
@@ -464,9 +502,74 @@ export default function Home() {
     }
   }
 
+  // Enter edit mode for main page title on click
+  const handlePageTitleClick = () => {
+    if (isEditingPageTitle) return // Prevent re-entering edit mode
+    setIsEditingPageTitle(true)
+    setEditingPageTitle(selectedPage?.title || '')
+    setPageTitleError(null) // Clear any previous errors
+  }
+
+  // Track page title changes as user types
+  const handlePageTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditingPageTitle(e.target.value)
+  }
+
+  // Save page title changes with validation and optimistic update
+  const handlePageTitleSave = async () => {
+    const trimmedTitle = editingPageTitle.trim()
+
+    if (!trimmedTitle) {
+      // Revert to original title if empty
+      setIsEditingPageTitle(false)
+      setEditingPageTitle('')
+      return
+    }
+
+    if (!selectedPageId || trimmedTitle === selectedPage?.title) {
+      // Title unchanged, exit edit mode without API call
+      setIsEditingPageTitle(false)
+      setEditingPageTitle('')
+      setPageTitleError(null)
+      return
+    }
+
+    try {
+      await handleRenamePage(selectedPageId, trimmedTitle)
+      setIsEditingPageTitle(false)
+      setEditingPageTitle('')
+      setPageTitleError(null)
+    } catch (err) {
+      setPageTitleError(err instanceof Error ? err.message : 'Failed to update title')
+    }
+  }
+
+  // Cancel page title editing without saving
+  const handlePageTitleCancel = () => {
+    setIsEditingPageTitle(false)
+    setEditingPageTitle('')
+    setPageTitleError(null)
+  }
+
+  // Keyboard shortcuts for page title editing
+  const handlePageTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handlePageTitleSave()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      handlePageTitleCancel()
+    }
+  }
+
+  // Auto-save page title on blur
+  const handlePageTitleBlur = () => {
+    handlePageTitleSave()
+  }
+
   return (
     // Two-column layout with sidebar
-    <div className="flex min-h-screen bg-white">
+    <div className="flex min-h-screen bg-white dark:bg-notion-dark-bg">
       {/* Sidebar integration for page navigation */}
       <Sidebar
         pages={pages}
@@ -475,6 +578,7 @@ export default function Home() {
         onCreatePage={handleCreatePage}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
+        onRenamePage={handleRenamePage}
       />
 
       {/* Main content area */}
@@ -520,6 +624,39 @@ export default function Home() {
               </div>
             ) : (
               <div className="max-w-3xl mx-auto">
+                {/* Display selected page title with click-to-edit functionality */}
+                {isEditingPageTitle ? (
+                  // Inline input for editing page title in main content area with error handling
+                  <div className="mb-4">
+                    <input
+                      type="text"
+                      value={editingPageTitle}
+                      onChange={handlePageTitleChange}
+                      onKeyDown={handlePageTitleKeyDown}
+                      onBlur={handlePageTitleBlur}
+                      autoFocus
+                      className={`text-4xl font-bold text-gray-900 dark:text-notion-dark-textSoft bg-transparent border-2 rounded px-2 py-1 focus:outline-none focus:ring-2 w-full transition-all ${
+                        pageTitleError
+                          ? 'border-red-500 dark:border-red-600 focus:ring-red-500 dark:focus:ring-red-600'
+                          : 'border-gray-400 dark:border-gray-500 focus:ring-gray-400 dark:focus:ring-gray-500'
+                      }`}
+                    />
+                    {pageTitleError && (
+                      <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                        {pageTitleError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  // Click to edit page title inline
+                  <h1
+                    onClick={handlePageTitleClick}
+                    className="text-4xl font-bold mb-4 text-gray-900 dark:text-notion-dark-textSoft cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-2 py-1 -mx-2 transition-colors"
+                  >
+                    {selectedPage?.title}
+                  </h1>
+                )}
+
                 {/* Page context propagation to child components */}
                 {selectedPageId && (
                   <>

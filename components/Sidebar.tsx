@@ -1,8 +1,9 @@
 // Notion-style sidebar component for page navigation with collapsible functionality
-// Simplified version - no page renaming yet
+// Props enable parent to manage page state and navigation
 
 'use client'
 
+import { useState } from 'react'
 import type { Page } from '@/lib/types'
 
 interface SidebarProps {
@@ -12,6 +13,7 @@ interface SidebarProps {
   onCreatePage: () => void
   isCollapsed: boolean
   onToggleCollapse: () => void
+  onRenamePage: (pageId: string, newTitle: string) => Promise<void> // Callback to parent for persisting page title changes
 }
 
 export function Sidebar({
@@ -20,13 +22,85 @@ export function Sidebar({
   onSelectPage,
   onCreatePage,
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  onRenamePage
 }: SidebarProps) {
+  // Local state for inline page renaming - only one page can be renamed at a time
+  const [editingPageId, setEditingPageId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+
+  // Enter rename mode on double-click, preserving current title for potential cancel
+  const handleDoubleClick = (pageId: string, currentTitle: string) => {
+    setEditingPageId(pageId)
+    setEditingTitle(currentTitle)
+    setRenameError(null) // Clear any previous error
+  }
+
+  // Track title changes as user types
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditingTitle(e.target.value)
+  }
+
+  // Save renamed title via parent callback, with validation for non-empty titles
+  const handleTitleSave = async (pageId: string) => {
+    const trimmedTitle = editingTitle.trim()
+    if (!trimmedTitle) {
+      // Revert to original title if empty
+      setEditingPageId(null)
+      setEditingTitle('')
+      return
+    }
+
+    // Find the current page to compare title
+    const currentPage = pages.find((p) => p.id === pageId)
+    if (currentPage && trimmedTitle === currentPage.title) {
+      // Title unchanged, exit edit mode without API call
+      setEditingPageId(null)
+      setEditingTitle('')
+      setRenameError(null)
+      return
+    }
+
+    try {
+      await onRenamePage(pageId, trimmedTitle)
+      // Only clear editing state on success
+      setEditingPageId(null)
+      setEditingTitle('')
+      setRenameError(null)
+    } catch (err) {
+      // Keep input open on failure, show error
+      setRenameError(err instanceof Error ? err.message : 'Failed to rename page')
+    }
+  }
+
+  // Cancel rename operation without saving changes
+  const handleTitleCancel = () => {
+    setEditingPageId(null)
+    setEditingTitle('')
+    setRenameError(null)
+  }
+
+  // Keyboard shortcuts for save (Enter) and cancel (Escape)
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, pageId: string) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleTitleSave(pageId)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      handleTitleCancel()
+    }
+  }
+
+  // Auto-save on blur (click away) for seamless UX
+  const handleTitleBlur = (pageId: string) => {
+    handleTitleSave(pageId)
+  }
   return (
     <aside
       className={`
         ${isCollapsed ? 'w-12' : 'w-64'}
-        bg-gray-100 border-r border-gray-200 flex flex-col transition-all duration-300 ease-in-out
+        bg-gray-100 dark:bg-notion-dark-sidebar border-r border-gray-200 dark:border-notion-dark-border flex flex-col transition-all duration-300 ease-in-out
         fixed left-0 top-0 h-screen
       `.trim()}
     >
@@ -37,14 +111,14 @@ export function Sidebar({
           onClick={onToggleCollapse}
           aria-label="Toggle sidebar"
           role="button"
-          className="text-gray-600 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-400 rounded p-1"
+          className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 rounded p-1"
         >
           <span className="text-xl">{isCollapsed ? '→' : '←'}</span>
         </button>
 
         {/* Pages heading - only shown when expanded */}
         {!isCollapsed && (
-          <h2 className="text-lg font-semibold text-gray-900">Pages</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-notion-dark-textSoft">Pages</h2>
         )}
       </div>
 
@@ -53,34 +127,69 @@ export function Sidebar({
         <div className="flex-1 overflow-y-auto px-2">
           {pages.length === 0 ? (
             // Empty state guidance
-            <div className="text-center py-8 px-4 text-gray-500 text-sm">
+            <div className="text-center py-8 px-4 text-gray-500 dark:text-notion-dark-textMuted text-sm">
               <p>No pages yet. Create your first page!</p>
             </div>
           ) : (
             <div className="space-y-1">
-              {pages.map((page) => (
-                <button
-                  key={page.id}
-                  onClick={() => onSelectPage(page.id)}
-                  className={`
-                    w-full text-left px-3 py-2 rounded-lg transition-colors truncate
-                    ${
-                      selectedPageId === page.id
-                        ? 'bg-gray-700 text-white'
-                        : 'text-gray-700 hover:bg-gray-200'
-                    }
-                  `.trim()}
-                >
-                  {page.title}
-                </button>
-              ))}
+              {pages.map((page) => {
+                // Check if this page is being edited
+                const isEditing = editingPageId === page.id
+
+                return isEditing ? (
+                  // Inline input for renaming page title with error feedback
+                  <div key={page.id} className="space-y-1">
+                    <input
+                      type="text"
+                      value={editingTitle}
+                      onChange={handleTitleChange}
+                      onKeyDown={(e) => handleTitleKeyDown(e, page.id)}
+                      onBlur={() => handleTitleBlur(page.id)}
+                      autoFocus
+                      aria-label="Rename page"
+                      className={`
+                        w-full text-left px-3 py-2 rounded-lg transition-colors
+                        ${
+                          selectedPageId === page.id
+                            ? 'bg-gray-700 dark:bg-gray-600 text-white'
+                            : 'bg-white dark:bg-notion-dark-sidebar text-gray-700 dark:text-notion-dark-textSoft'
+                        }
+                        ${renameError ? 'border-2 border-red-500 dark:border-red-600' : 'border-2 border-gray-400 dark:border-gray-500'}
+                        focus:outline-none focus:ring-2 focus:ring-gray-400 dark:focus:ring-gray-500
+                      `.trim()}
+                    />
+                    {renameError && (
+                      <p className="text-xs text-red-600 dark:text-red-400 px-3">
+                        {renameError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  // Double-click to rename, single-click to select page
+                  <button
+                    key={page.id}
+                    onClick={() => onSelectPage(page.id)}
+                    onDoubleClick={() => handleDoubleClick(page.id, page.title)}
+                    className={`
+                      w-full text-left px-3 py-2 rounded-lg transition-colors truncate
+                      ${
+                        selectedPageId === page.id
+                          ? 'bg-gray-700 dark:bg-gray-600 text-white'
+                          : 'text-gray-700 dark:text-notion-dark-textSoft hover:bg-gray-200 dark:hover:bg-gray-700'
+                      }
+                    `.trim()}
+                  >
+                    {page.title}
+                  </button>
+                )
+              })}
             </div>
           )}
 
           {/* Add New button - appears directly under the pages list */}
           <button
             onClick={onCreatePage}
-            className="w-full text-left px-3 py-2 mt-1 rounded-lg transition-colors text-gray-500 hover:bg-gray-200 hover:text-gray-700 flex items-center gap-2"
+            className="w-full text-left px-3 py-2 mt-1 rounded-lg transition-colors text-gray-500 dark:text-notion-dark-textMuted hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-notion-dark-textSoft flex items-center gap-2"
           >
             <span className="text-lg">+</span>
             <span className="text-sm">New Page</span>
