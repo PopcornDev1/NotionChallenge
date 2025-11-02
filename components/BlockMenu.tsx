@@ -10,6 +10,7 @@ interface BlockMenuProps {
   isOpen: boolean
   position: { x: number; y: number }
   onSelectType: (type: 'text' | 'image', variant?: 'h1' | 'h2' | 'h3' | 'paragraph') => void
+  onSelectImage: () => void // Separate handler for image blocks to trigger ImageModal instead of direct creation
   onClose: () => void
 }
 
@@ -64,7 +65,7 @@ const menuOptions: MenuOption[] = [
   }
 ]
 
-export default function BlockMenu({ isOpen, position, onSelectType, onClose }: BlockMenuProps) {
+export default function BlockMenu({ isOpen, position, onSelectType, onSelectImage, onClose }: BlockMenuProps) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -123,7 +124,12 @@ export default function BlockMenu({ isOpen, position, onSelectType, onClose }: B
         case 'Enter':
           e.preventDefault()
           const selected = menuOptions[selectedIndex]
-          onSelectType(selected.type, selected.variant)
+          // Handle image selection via keyboard (Enter key) by opening modal
+          if (selected.type === 'image') {
+            onSelectImage()
+          } else {
+            onSelectType(selected.type, selected.variant)
+          }
           break
         case 'Escape':
           e.preventDefault()
@@ -134,7 +140,7 @@ export default function BlockMenu({ isOpen, position, onSelectType, onClose }: B
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, selectedIndex, onSelectType, onClose])
+  }, [isOpen, selectedIndex, onSelectType, onSelectImage, onClose])
 
   // Adjust position after render to ensure menu stays in viewport
   useEffect(() => {
@@ -202,7 +208,7 @@ export default function BlockMenu({ isOpen, position, onSelectType, onClose }: B
       {/* Menu card */}
       <nav
         ref={menuRef}
-        className="fixed z-50 w-64 bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden animate-fadeIn"
+        className="fixed z-50 w-64 bg-white dark:bg-notion-dark-sidebar rounded-lg shadow-lg dark:shadow-gray-900/50 border border-gray-200 dark:border-gray-700 overflow-hidden animate-fadeIn"
         style={{
           left: `${position.x}px`,
           top: `${position.y}px`,
@@ -214,15 +220,20 @@ export default function BlockMenu({ isOpen, position, onSelectType, onClose }: B
           {menuOptions.map((option, index) => (
             <button
               key={option.id}
-              ref={(el) => (buttonRefs.current[index] = el)}
+              ref={(el) => { buttonRefs.current[index] = el }}
               onClick={() => {
-                onSelectType(option.type, option.variant)
+                // Image selection opens ImageModal for URL input and dimension detection
+                if (option.type === 'image') {
+                  onSelectImage()
+                } else {
+                  onSelectType(option.type, option.variant)
+                }
               }}
               onFocus={() => setSelectedIndex(index)}
               className={`w-full px-4 py-2 flex items-start gap-3 text-left transition-colors ${
                 index === selectedIndex
-                  ? 'bg-gray-100 text-gray-900'
-                  : 'hover:bg-gray-50 text-gray-700'
+                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-200'
+                  : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-notion-dark-text'
               }`}
               role="menuitem"
               aria-label={`Create ${option.label} block`}
@@ -231,7 +242,7 @@ export default function BlockMenu({ isOpen, position, onSelectType, onClose }: B
               <span className="text-xl flex-shrink-0 w-6 text-center">{option.icon}</span>
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm">{option.label}</div>
-                <div className="text-xs text-gray-500">{option.description}</div>
+                <div className="text-xs text-gray-500 dark:text-notion-dark-textMuted">{option.description}</div>
               </div>
             </button>
           ))}
