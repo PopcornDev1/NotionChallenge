@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import type { FormEvent } from 'react'
 import type { Block } from '@/lib/types'
 import { validateBlockEdit } from '@/lib/client/validation'
@@ -21,6 +21,7 @@ interface BlockProps {
   isDragging: boolean
   isDragOver: boolean
   dropPosition: 'before' | 'after' | null
+  onOpenMenuForBlock: (blockId: string, position: { x: number; y: number }) => void
 }
 
 export function Block({
@@ -34,7 +35,8 @@ export function Block({
   onDrop,
   isDragging,
   isDragOver,
-  dropPosition
+  dropPosition,
+  onOpenMenuForBlock
 }: BlockProps) {
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false)
@@ -135,6 +137,31 @@ export function Block({
       setError(err instanceof Error ? err.message : 'Failed to save changes')
     }
   }
+
+  // Container ref for menu positioning
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Handle '+' button click to open menu
+  const handlePlusClick = () => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect()
+      const menuWidth = 256 // w-64 in Tailwind
+      const padding = 8
+
+      // Try to position menu to the left of the trigger
+      let x = rect.left - menuWidth - padding
+      const y = rect.top
+
+      // If menu would overflow left edge, position to the right instead
+      if (x < padding) {
+        x = rect.right + padding
+      }
+
+      // Menu will dynamically adjust for viewport overflow after rendering
+      onOpenMenuForBlock(block.id, { x, y })
+    }
+  }
+
   // Drag-and-drop handlers
   const handleDragStartEvent = (e: React.DragEvent) => {
     // Set data for cross-browser compatibility
@@ -314,12 +341,23 @@ export function Block({
   // Display mode rendering with drag-and-drop support
   return (
     <div
+      ref={containerRef}
       onDragOver={handleDragOverEvent}
       onDragLeave={handleDragLeaveEvent}
       onDrop={handleDropEvent}
       className={containerClasses}
       role="article"
     >
+      {/* Hover '+' button for inline block creation */}
+      <button
+        onClick={handlePlusClick}
+        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-8 w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-400 hover:text-white text-gray-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-20"
+        aria-label="Open block menu"
+        title="Add block"
+      >
+        +
+      </button>
+
       {/* Drop position indicator line */}
       {isDragOver && dropPosition === 'before' && (
         <div className="absolute top-0 left-0 right-0 h-1 bg-gray-500 -mt-0.5 rounded-full z-10" />

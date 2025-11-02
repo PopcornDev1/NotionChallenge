@@ -6,6 +6,9 @@ import { useState, useEffect } from 'react'
 import type { Block, Page } from '@/lib/types'
 import { Block as BlockComponent } from '@/components/Block'
 import { Sidebar } from '@/components/Sidebar'
+import BlockMenu from '@/components/BlockMenu'
+import EmptyBlock from '@/components/EmptyBlock'
+import { generateBlockId } from '@/lib/client/uuid'
 
 export default function Home() {
   // Pages state - list of all pages
@@ -28,6 +31,11 @@ export default function Home() {
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null)
   const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null)
   const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null)
+
+  // Block menu state for inline creation
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 })
+  const [menuInsertPosition, setMenuInsertPosition] = useState<{ afterBlockId: string | null }>({ afterBlockId: null })
 
   // Fetch pages on component mount
   useEffect(() => {
@@ -289,6 +297,103 @@ export default function Home() {
     }
   }
 
+  // Menu handlers for inline block creation
+  const handleOpenMenuForBlock = (blockId: string, position: { x: number; y: number }) => {
+    setMenuPosition(position)
+    setMenuInsertPosition({ afterBlockId: blockId })
+    setIsMenuOpen(true)
+  }
+
+  const handleOpenMenuForEmpty = (position: { x: number; y: number }) => {
+    setMenuPosition(position)
+    setMenuInsertPosition({ afterBlockId: null })
+    setIsMenuOpen(true)
+  }
+
+  const handleCloseMenu = () => {
+    setIsMenuOpen(false)
+  }
+
+  const handleSelectBlockType = (type: 'text' | 'image', variant?: 'h1' | 'h2' | 'h3' | 'paragraph') => {
+    if (!selectedPageId) return
+
+    const newBlockId = generateBlockId()
+
+    let newBlock: Block
+    if (type === 'text') {
+      newBlock = {
+        id: newBlockId,
+        type: 'text',
+        content: '',
+        styles: { variant: variant || 'paragraph' }
+      }
+    } else {
+      // For image, prompt for URL
+      const url = window.prompt('Enter image URL:')
+      if (!url || !url.trim()) {
+        setIsMenuOpen(false)
+        return
+      }
+
+      newBlock = {
+        id: newBlockId,
+        type: 'image',
+        content: url.trim(),
+        styles: { width: 600, height: 400 }
+      }
+    }
+
+    // Insert block at the correct position
+    let updatedBlocks: Block[]
+    if (menuInsertPosition.afterBlockId === null) {
+      // Insert at end (from EmptyBlock)
+      updatedBlocks = [...blocks, newBlock]
+    } else {
+      // Insert after specific block
+      const insertIndex = blocks.findIndex(b => b.id === menuInsertPosition.afterBlockId)
+      if (insertIndex !== -1) {
+        updatedBlocks = [
+          ...blocks.slice(0, insertIndex + 1),
+          newBlock,
+          ...blocks.slice(insertIndex + 1)
+        ]
+      } else {
+        updatedBlocks = [...blocks, newBlock]
+      }
+    }
+
+    // Update page blocks
+    updatePageBlocks(selectedPageId, updatedBlocks)
+    setIsMenuOpen(false)
+  }
+
+  const handleCreateBlockFromEmpty = (content: string, variant: 'h1' | 'h2' | 'h3' | 'paragraph' | 'image') => {
+    if (!selectedPageId) return
+
+    const newBlockId = generateBlockId()
+
+    let newBlock: Block
+    if (variant === 'image') {
+      // For image, use content as URL
+      newBlock = {
+        id: newBlockId,
+        type: 'image',
+        content: content,
+        styles: { width: 600, height: 400 }
+      }
+    } else {
+      newBlock = {
+        id: newBlockId,
+        type: 'text',
+        content: content,
+        styles: { variant }
+      }
+    }
+
+    const updatedBlocks = [...blocks, newBlock]
+    updatePageBlocks(selectedPageId, updatedBlocks)
+  }
+
   return (
     // Two-column layout with sidebar
     <div className="flex min-h-screen bg-white">
@@ -365,28 +470,29 @@ export default function Home() {
                     {/* Success state: render blocks */}
                     {!loading && !error && (
                       <div className="flex flex-col gap-4">
-                        {blocks.length === 0 ? (
-                          <div className="text-center py-12 text-gray-500">
-                            <p>No blocks yet. Start by creating some content!</p>
-                          </div>
-                        ) : (
-                          blocks.map((block) => (
-                            <BlockComponent
-                              key={block.id}
-                              block={block}
-                              onUpdate={handleUpdateBlock}
-                              onDelete={handleDeleteBlock}
-                              onDragStart={handleDragStart}
-                              onDragEnd={handleDragEnd}
-                              onDragOver={handleDragOver}
-                              onDragLeave={handleDragLeave}
-                              onDrop={handleDrop}
-                              isDragging={draggedBlockId === block.id}
-                              isDragOver={dragOverBlockId === block.id}
-                              dropPosition={dragOverBlockId === block.id ? dropPosition : null}
-                            />
-                          ))
-                        )}
+                        {blocks.map((block) => (
+                          <BlockComponent
+                            key={block.id}
+                            block={block}
+                            onUpdate={handleUpdateBlock}
+                            onDelete={handleDeleteBlock}
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            onDrop={handleDrop}
+                            isDragging={draggedBlockId === block.id}
+                            isDragOver={dragOverBlockId === block.id}
+                            dropPosition={dragOverBlockId === block.id ? dropPosition : null}
+                            onOpenMenuForBlock={handleOpenMenuForBlock}
+                          />
+                        ))}
+
+                        {/* Empty block placeholder for creating new content */}
+                        <EmptyBlock
+                          onCreateBlock={handleCreateBlockFromEmpty}
+                          onOpenMenu={handleOpenMenuForEmpty}
+                        />
                       </div>
                     )}
                   </>
@@ -396,6 +502,14 @@ export default function Home() {
           </>
         )}
       </main>
+
+      {/* Block menu for inline creation */}
+      <BlockMenu
+        isOpen={isMenuOpen}
+        position={menuPosition}
+        onSelectType={handleSelectBlockType}
+        onClose={handleCloseMenu}
+      />
     </div>
   )
 }
