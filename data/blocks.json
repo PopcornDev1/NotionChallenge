@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "type": "text",
+    "content": "Testing2",
+    "styles": {
+      "variant": "h1"
+    },
+    "id": "1762053819246"
+  },
+  {
+    "type": "text",
+    "content": "Test",
+    "styles": {
+      "variant": "paragraph"
+    },
+    "id": "1762053813392"
+  }
+]

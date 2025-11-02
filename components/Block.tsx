@@ -732,10 +732,6 @@ export function Block({
             ${isDragging ? 'cursor-grabbing opacity-100' : ''}
             ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
           `.trim()}
-          onMouseDown={(e) => {
-            e.stopPropagation()
-            e.preventDefault()
-          }}
         >
           <span className="text-lg leading-none">⋮⋮</span>
         </div>
@@ -751,7 +747,6 @@ export function Block({
                   onSelect()
                   handleEdit()
                 }}
-                onMouseDown={(e) => e.stopPropagation()}
                 className="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm font-semibold rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
               >
                 Edit
@@ -761,7 +756,6 @@ export function Block({
                   e.stopPropagation()
                   onDelete(block.id)
                 }}
-                onMouseDown={(e) => e.stopPropagation()}
                 className="px-3 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-sm font-semibold rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
               >
                 Delete

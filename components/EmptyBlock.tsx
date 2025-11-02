@@ -145,13 +145,13 @@ export default function EmptyBlock({ onCreateBlock, onOpenMenu }: EmptyBlockProp
   return (
     <div
       ref={containerRef}
-      className="group relative p-4 rounded-lg transition-all bg-white border-2 border-transparent hover:border-gray-200 hover:shadow-md"
+      className="group relative p-4 rounded-lg transition-all bg-white dark:bg-notion-dark-bg border-2 border-transparent hover:border-gray-200 dark:hover:border-notion-dark-border hover:shadow-md dark:hover:shadow-gray-900/50"
       onClick={() => inputRef.current?.focus()}
     >
       {/* Hover '+' button */}
       <button
         onClick={handlePlusClick}
-        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-8 w-6 h-6 rounded-full bg-gray-200 hover:bg-gray-400 hover:text-white text-gray-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-8 w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-600 hover:text-white text-gray-600 dark:text-gray-400 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
         aria-label="Open block menu"
         title="Add block"
       >
@@ -166,7 +166,7 @@ export default function EmptyBlock({ onCreateBlock, onOpenMenu }: EmptyBlockProp
         onKeyDown={handleKeyDown}
         onFocus={() => setIsFocused(true)}
         onBlur={handleBlur}
-        className="outline-none text-gray-900 min-h-[24px] empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400"
+        className="outline-none text-gray-900 dark:text-notion-dark-textSoft min-h-[24px] empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400 dark:empty:before:text-notion-dark-textMuted"
         data-placeholder="Type '/' for commands or start writing..."
         role="textbox"
         aria-label="Empty block placeholder"

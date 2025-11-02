@@ -39,6 +39,27 @@
   }
 }
 
+/* Sidebar Styles */
+/* Most styling is handled via Tailwind classes in Sidebar.tsx */
+/* Minimal CSS approach with Tailwind-first strategy */
+
+/* Layout considerations for sidebar integration */
+/* Ensures flex layout works properly with sidebar + main content */
+/* Full-viewport sidebar height is handled by min-h-screen on container */
+
+/* Visual consistency with existing components */
+/* Sidebar border, hover states, and transitions are in Tailwind classes */
+
+/* Responsive behavior */
+/* Mobile overlays can be added via media queries if needed */
+@media (max-width: 768px) {
+  /* Consider overlay sidebar on mobile instead of side-by-side */
+  /* Add z-index for overlay behavior if implementing mobile overlay */
+}
+
+/* Inline Block Creation - BlockMenu */
+/* Popup menu for selecting block type during inline creation */
+/* Most styling is Tailwind classes in BlockMenu.tsx */
 /* Animation for smooth menu appearance */
 @keyframes fadeIn {
   from {
@@ -55,8 +76,23 @@
   animation: fadeIn 0.15s ease-out;
 }
 
+/* Inline Block Creation - EmptyBlock */
+/* Placeholder at page bottom for starting new content */
+/* Subtle styling to distinguish from real blocks */
+/* Focus state highlights with blue border */
+/* Smooth transitions for all states */
+
+/* Inline Block Creation - Hover Plus Button */
+/* Circular button that appears on block hover */
+/* Positioned to left of drag handle */
+/* Smooth opacity transition on hover */
+/* Blue accent color matching theme */
+
 /* ContentEditable for inline typing */
 /* Enables inline text editing in display mode */
+/* Removes default browser outline on focus */
+/* Maintains existing typography styles (h1, h2, h3, p) */
+/* Custom caret color for better visibility */
 [contentEditable="true"] {
   caret-color: #3b82f6; /* Blue-500 */
 }
@@ -66,12 +102,21 @@
 }
 
 /* Placeholder text for empty contentEditable elements */
+/* Uses CSS pseudo-element for placeholder behavior */
 [contentEditable="true"][data-placeholder]:empty:before {
   content: attr(data-placeholder);
   color: #9ca3af; /* Gray-400 */
   pointer-events: none;
 }
 
-.dark [contentEditable="true"][data-placeholder]:empty:before {
-  color: #6b7280; /* Gray-500 for dark mode */
+/* Animation enhances UX for menu appearance */
+/* Fade-in with subtle slide-down creates polished feel */
+/* Consistent with Notion-style interactions */
+
+/* Mobile-friendly design */
+/* Touch targets sized appropriately */
+/* Menu positioning adapts to viewport */
+@media (max-width: 768px) {
+  /* Adjust menu width for mobile screens */
+  /* Ensure touch-friendly button sizes */
 }
