@@ -1,15 +1,25 @@
-// Client component that manages multi-page block editor with sidebar
+// Client component that manages multi-page block editor
+// Implements pages with sidebar navigation and page-scoped block management
+// Inline block creation via hover '+' buttons, BlockMenu, slash commands, and Enter key
+// Flow: hover '+' → menu → block creation → persistence
+//
+// ID GENERATION CONTRACT:
+// - All block and page IDs are client-generated using crypto.randomUUID()
+// - Server accepts and preserves client-supplied UUIDs without reassignment
+// - This enables optimistic UI where blocks/pages appear immediately with final IDs
+// - Never use Date.now() for ID generation (not guaranteed unique)
 
 'use client'
 
-import { useState, useEffect } from 'react'
-import type { Block, Page } from '@/lib/types'
+import { useState, useEffect, useRef } from 'react'
+import type { Block, Page } from '@/lib/types' // New imports for multi-page functionality
 import { Block as BlockComponent } from '@/components/Block'
-import { Sidebar } from '@/components/Sidebar'
-import BlockMenu from '@/components/BlockMenu'
-import EmptyBlock from '@/components/EmptyBlock'
-import ImageModal from '@/components/ImageModal'
-import { generateBlockId } from '@/lib/client/uuid'
+import BlockMenu from '@/components/BlockMenu' // Inline creation menu
+import EmptyBlock from '@/components/EmptyBlock' // Placeholder at page bottom
+import { Sidebar } from '@/components/Sidebar' // Sidebar navigation
+import { generateBlockId, generatePageId } from '@/lib/client/uuid' // UUID generation
+import ThemeToggle from '@/components/ThemeToggle' // Theme toggle component
+import ImageModal from '@/components/ImageModal' // Image modal for URL input and dimension detection
 
 export default function Home() {
   // Pages state - list of all pages
@@ -33,10 +43,16 @@ export default function Home() {
   const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null)
   const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null)
 
-  // Block menu state for inline creation
-  const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 })
-  const [menuInsertPosition, setMenuInsertPosition] = useState<{ afterBlockId: string | null }>({ afterBlockId: null })
+  // Inline creation state - BlockMenu management
+  const [isBlockMenuOpen, setIsBlockMenuOpen] = useState(false)
+  const [blockMenuPosition, setBlockMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const [blockMenuContext, setBlockMenuContext] = useState<{ blockId: string | null; insertPosition: 'after' | 'bottom' }>({
+    blockId: null,
+    insertPosition: 'bottom'
+  })
+
+  // Focus management for newly created blocks
+  const [focusBlockId, setFocusBlockId] = useState<string | null>(null)
 
   // Selection state for clean block UX - only one block selected at a time
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
@@ -53,11 +69,17 @@ export default function Home() {
   const [editingPageTitle, setEditingPageTitle] = useState('')
   const [pageTitleError, setPageTitleError] = useState<string | null>(null)
 
-  // Fetch pages on component mount
+  // State for showing EmptyBlock (only show when user clicks the empty area)
+  const [showEmptyBlock, setShowEmptyBlock] = useState(false)
+
+  // Ref to track background refresh AbortController
+  const refreshControllerRef = useRef<AbortController | null>(null)
+
+  // Fetch pages on component mount - pages fetch
   useEffect(() => {
-    const fetchPages = async () => {
+    const fetchPages = async (signal?: AbortSignal) => {
       try {
-        const response = await fetch('/api/pages')
+        const response = await fetch('/api/pages', { signal })
 
         if (!response.ok) {
           throw new Error('Failed to fetch pages')
@@ -70,26 +92,41 @@ export default function Home() {
           throw new Error('Invalid response: expected an array of pages')
         }
 
-        setPages(data as Page[])
-        setPagesLoading(false)
-        setPagesError(null)
+        if (!signal?.aborted) {
+          setPages(data as Page[])
+          setPagesLoading(false)
+          setPagesError(null)
+        }
       } catch (err) {
-        setPagesError(err instanceof Error ? err.message : 'An error occurred')
-        setPagesLoading(false)
+        // Ignore AbortError - component was unmounted
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return
+        }
+
+        // Handle other errors
+        if (!signal?.aborted) {
+          setPagesError(err instanceof Error ? err.message : 'An error occurred')
+          setPagesLoading(false)
+        }
       }
     }
 
-    fetchPages()
+    const controller = new AbortController()
+    fetchPages(controller.signal)
+
+    return () => {
+      controller.abort()
+    }
   }, [])
 
-  // Auto-select first page
+  // Auto-select first page - auto-selection of first page for better UX
   useEffect(() => {
     if (pages.length > 0 && selectedPageId === null) {
       setSelectedPageId(pages[0].id)
     }
   }, [pages, selectedPageId])
 
-  // Load sidebar collapse state from localStorage on mount
+  // Load sidebar collapse state from localStorage on mount - persistent sidebar state across sessions
   useEffect(() => {
     const savedState = localStorage.getItem('sidebarCollapsed')
     if (savedState !== null) {
@@ -97,7 +134,7 @@ export default function Home() {
     }
   }, [])
 
-  // Load page blocks when selectedPageId changes
+  // Load page blocks when selectedPageId changes - page-specific block loading on page selection
   useEffect(() => {
     if (selectedPageId === null) {
       setBlocks([])
@@ -120,8 +157,21 @@ export default function Home() {
     setError(null)
   }, [selectedPageId, pages])
 
-  // Helper to get selected page object
-  const selectedPage = pages.find((p) => p.id === selectedPageId)
+  // Global keyboard shortcuts - Escape key closes ImageModal or BlockMenu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isImageModalOpen) {
+          handleCloseImageModal()
+        } else if (isBlockMenuOpen) {
+          handleCloseMenu()
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isImageModalOpen, isBlockMenuOpen])
 
   // Sidebar collapse handler
   const handleToggleSidebar = () => {
@@ -131,21 +181,21 @@ export default function Home() {
     localStorage.setItem('sidebarCollapsed', JSON.stringify(newState))
   }
 
-  // Page selection handler
+  // Page selection handler - page selection triggers block loading
   const handleSelectPage = (pageId: string) => {
     setSelectedPageId(pageId)
     setError(null)
   }
 
-  // Page creation handler
+  // Page creation handler - page creation with immediate selection
   const handleCreatePage = async () => {
     const title = window.prompt('Enter page title:')
     if (!title || title.trim().length === 0) {
       return
     }
 
-    // Generate page ID client-side
-    const newPageId = Date.now().toString()
+    // Generate page ID client-side - preserved by server
+    const newPageId = generatePageId()
     const newPage: Page = {
       id: newPageId,
       title: title.trim(),
@@ -174,37 +224,8 @@ export default function Home() {
     }
   }
 
-  // Handle page renaming from Sidebar with optimistic update and error rollback
-  const handleRenamePage = async (pageId: string, newTitle: string) => {
-    const previousPages = [...pages]
-
-    // Optimistically update local state
-    const updatedPages = pages.map((p) =>
-      p.id === pageId ? { ...p, title: newTitle } : p
-    )
-    setPages(updatedPages)
-
-    try {
-      const page = updatedPages.find((p) => p.id === pageId)
-      if (!page) throw new Error('Page not found')
-
-      const response = await fetch(`/api/pages/${pageId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(page)
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to rename page')
-      }
-    } catch (err) {
-      // Rollback on error
-      setPages(previousPages)
-      throw err
-    }
-  }
-
   // Update page in pages state helper with error rollback
+  // Uses single-page endpoint for efficiency instead of bulk updates
   const updatePageBlocks = async (pageId: string, newBlocks: Block[]) => {
     // Capture snapshot of previous state BEFORE applying optimistic changes
     const previousPages = [...pages]
@@ -217,7 +238,7 @@ export default function Home() {
     setPages(updatedPages)
     setBlocks(newBlocks)
 
-    // Persist single updated page to server
+    // Persist single updated page to server (more efficient than bulk update)
     try {
       const page = updatedPages.find((p) => p.id === pageId)
       if (!page) return
@@ -251,6 +272,205 @@ export default function Home() {
       // Re-throw to allow callers to handle if needed
       throw err
     }
+  }
+
+  // Inline creation handlers
+
+  // Opens BlockMenu for inserting block after specific block
+  const handleOpenMenuForBlock = (blockId: string, position: { x: number; y: number }) => {
+    setIsBlockMenuOpen(true)
+    setBlockMenuPosition(position)
+    setBlockMenuContext({ blockId, insertPosition: 'after' })
+  }
+
+  // Opens BlockMenu for inserting block at page bottom (from EmptyBlock)
+  const handleOpenMenuForEmpty = (position: { x: number; y: number }) => {
+    setIsBlockMenuOpen(true)
+    setBlockMenuPosition(position)
+    setBlockMenuContext({ blockId: null, insertPosition: 'bottom' })
+  }
+
+  // Closes BlockMenu and clears context
+  const handleCloseMenu = () => {
+    setIsBlockMenuOpen(false)
+    setBlockMenuPosition(null)
+    setBlockMenuContext({ blockId: null, insertPosition: 'bottom' })
+  }
+
+  // Opens ImageModal for image block creation, preserving insertion context
+  const handleOpenImageModal = (context: { blockId: string | null; insertPosition: 'after' | 'bottom' }) => {
+    setIsImageModalOpen(true)
+    setImageModalContext(context)
+  }
+
+  // Closes ImageModal and clears context
+  const handleCloseImageModal = () => {
+    setIsImageModalOpen(false)
+    setImageModalContext({ blockId: null, insertPosition: 'bottom' })
+  }
+
+  // Creates image block with user-provided URL and dimensions, inserts at correct position
+  const handleConfirmImageModal = async (url: string, width: number, height: number) => {
+    if (!selectedPageId) return
+
+    // Generate new block ID - client-generated, preserved by server
+    const newBlockId = generateBlockId()
+
+    // Create new ImageBlock
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'image',
+      content: url,
+      styles: { width, height }
+    }
+
+    // Determine insertion position from imageModalContext
+    let updatedBlocks: Block[]
+    if (imageModalContext.blockId) {
+      // Insert after specific block
+      const blockIndex = blocks.findIndex((b) => b.id === imageModalContext.blockId)
+      if (blockIndex !== -1) {
+        updatedBlocks = [
+          ...blocks.slice(0, blockIndex + 1),
+          newBlock,
+          ...blocks.slice(blockIndex + 1)
+        ]
+      } else {
+        updatedBlocks = [...blocks, newBlock]
+      }
+    } else {
+      // Append to end
+      updatedBlocks = [...blocks, newBlock]
+    }
+
+    // Close modal immediately for better UX
+    handleCloseImageModal()
+
+    // Update local state and persist
+    await updatePageBlocks(selectedPageId, updatedBlocks)
+
+    // Focus newly created block
+    setFocusBlockId(newBlockId)
+  }
+
+  // Creates and inserts new block from BlockMenu selection
+  const handleSelectBlockType = async (type: 'text' | 'image', variant?: 'h1' | 'h2' | 'h3' | 'paragraph') => {
+    if (!selectedPageId) return
+
+    // Image blocks now go through ImageModal for dimension detection
+    if (type === 'image') {
+      handleCloseMenu() // Close BlockMenu first
+      handleOpenImageModal(blockMenuContext)
+      return
+    }
+
+    // Generate new block ID - client-generated, preserved by server
+    const newBlockId = generateBlockId()
+
+    // Build new block object for text types
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'text',
+      content: '',
+      styles: { variant: variant || 'paragraph' }
+    }
+
+    // Determine insertion position from context
+    let updatedBlocks: Block[]
+    if (blockMenuContext.blockId) {
+      // Insert after specific block
+      const blockIndex = blocks.findIndex((b) => b.id === blockMenuContext.blockId)
+      if (blockIndex !== -1) {
+        updatedBlocks = [
+          ...blocks.slice(0, blockIndex + 1),
+          newBlock,
+          ...blocks.slice(blockIndex + 1)
+        ]
+      } else {
+        updatedBlocks = [...blocks, newBlock]
+      }
+    } else {
+      // Append to end
+      updatedBlocks = [...blocks, newBlock]
+    }
+
+    // Close menu immediately for better UX
+    handleCloseMenu()
+
+    // Update local state and persist
+    await updatePageBlocks(selectedPageId, updatedBlocks)
+
+    // Focus newly created block
+    setFocusBlockId(newBlockId)
+  }
+
+  // Direct insertion after block (used by Enter key and slash commands)
+  const handleInsertBlockAfter = async (currentBlockId: string, type: 'text' | 'image', variant?: 'h1' | 'h2' | 'h3' | 'paragraph') => {
+    if (!selectedPageId) return
+
+    // Image insertion via Enter key or slash command opens modal
+    if (type === 'image') {
+      handleOpenImageModal({ blockId: currentBlockId, insertPosition: 'after' })
+      return
+    }
+
+    // Generate new block ID - client-generated, preserved by server
+    const newBlockId = generateBlockId()
+
+    // Build new block for text types
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'text',
+      content: '',
+      styles: { variant: variant || 'paragraph' }
+    }
+
+    // Insert after current block
+    const blockIndex = blocks.findIndex((b) => b.id === currentBlockId)
+    const updatedBlocks = blockIndex !== -1
+      ? [
+          ...blocks.slice(0, blockIndex + 1),
+          newBlock,
+          ...blocks.slice(blockIndex + 1)
+        ]
+      : [...blocks, newBlock]
+
+    // Update local state and persist
+    await updatePageBlocks(selectedPageId, updatedBlocks)
+
+    // Focus newly created block
+    setFocusBlockId(newBlockId)
+  }
+
+  // Creates block from EmptyBlock component
+  const handleCreateFromEmpty = async (content: string, variant: 'h1' | 'h2' | 'h3' | 'paragraph' | 'image') => {
+    if (!selectedPageId) return
+
+    // Image creation from EmptyBlock opens modal
+    if (variant === 'image') {
+      handleOpenImageModal({ blockId: null, insertPosition: 'bottom' })
+      return
+    }
+
+    // Generate new block ID - client-generated, preserved by server
+    const newBlockId = generateBlockId()
+
+    // Build new block for text types
+    const newBlock: Block = {
+      id: newBlockId,
+      type: 'text',
+      content,
+      styles: { variant }
+    }
+
+    // Append to end
+    const updatedBlocks = [...blocks, newBlock]
+
+    // Hide EmptyBlock after creating the block
+    setShowEmptyBlock(false)
+
+    // Update local state and persist
+    await updatePageBlocks(selectedPageId, updatedBlocks)
   }
 
   // Drag-and-drop handlers
@@ -319,7 +539,8 @@ export default function Home() {
     // Clear selection after block operations for clean state
     handleDeselectBlock()
 
-    // Persist new order to server
+    // Persist new order to server - page-scoped reordering
+    // updatePageBlocks handles both setPages and setBlocks
     if (selectedPageId) {
       updatePageBlocks(selectedPageId, reorderedBlocks)
     }
@@ -333,6 +554,7 @@ export default function Home() {
     )
 
     // Update the selected page's blocks in pages state
+    // updatePageBlocks handles both setPages and setBlocks with rollback
     if (selectedPageId) {
       await updatePageBlocks(selectedPageId, updatedBlocks)
     }
@@ -343,145 +565,57 @@ export default function Home() {
     // Calculate updated blocks with deleted block removed
     const updatedBlocks = blocks.filter((block) => block.id !== id)
 
-    // Clear selection after block operations for clean state
-    handleDeselectBlock()
-
     // Update the selected page's blocks in pages state
+    // updatePageBlocks handles both setPages and setBlocks with rollback
     if (selectedPageId) {
       await updatePageBlocks(selectedPageId, updatedBlocks)
     }
+
+    // Clear selection after block operations for clean state
+    handleDeselectBlock()
   }
 
-  // Menu handlers for inline block creation
-  const handleOpenMenuForBlock = (blockId: string, position: { x: number; y: number }) => {
-    setMenuPosition(position)
-    setMenuInsertPosition({ afterBlockId: blockId })
-    setIsMenuOpen(true)
-  }
-
-  const handleOpenMenuForEmpty = (position: { x: number; y: number }) => {
-    setMenuPosition(position)
-    setMenuInsertPosition({ afterBlockId: null })
-    setIsMenuOpen(true)
-  }
-
-  const handleCloseMenu = () => {
-    setIsMenuOpen(false)
-  }
-
-  // Opens ImageModal for image block creation, preserving insertion context
-  const handleOpenImageModal = (context: { blockId: string | null; insertPosition: 'after' | 'bottom' }) => {
-    setIsImageModalOpen(true)
-    setImageModalContext(context)
-  }
-
-  // Closes ImageModal and clears context
-  const handleCloseImageModal = () => {
-    setIsImageModalOpen(false)
-    setImageModalContext({ blockId: null, insertPosition: 'bottom' })
-  }
-
-  // Creates image block with user-provided URL and dimensions, inserts at correct position
-  const handleConfirmImageModal = async (url: string, width: number, height: number) => {
-    if (!selectedPageId) return
-
-    // Generate new block ID - client-generated, preserved by server
-    const newBlockId = generateBlockId()
-    const newBlock: Block = {
-      id: newBlockId,
-      type: 'image',
-      content: url,
-      styles: { width, height }
-    }
-
-    let updatedBlocks: Block[]
-    if (imageModalContext.insertPosition === 'bottom') {
-      // Insert at end (from EmptyBlock)
-      updatedBlocks = [...blocks, newBlock]
-    } else {
-      // Insert after specific block
-      const insertIndex = blocks.findIndex(b => b.id === imageModalContext.blockId)
-      if (insertIndex !== -1) {
-        updatedBlocks = [
-          ...blocks.slice(0, insertIndex + 1),
-          newBlock,
-          ...blocks.slice(insertIndex + 1)
-        ]
-      } else {
-        updatedBlocks = [...blocks, newBlock]
-      }
-    }
-
-    // Close modal immediately for better UX
-    handleCloseImageModal()
-
-    // Update local state and persist
-    await updatePageBlocks(selectedPageId, updatedBlocks)
-  }
-
-  const handleSelectBlockType = (type: 'text' | 'image', variant?: 'h1' | 'h2' | 'h3' | 'paragraph') => {
-    if (!selectedPageId) return
-
-    // Image blocks now go through ImageModal for dimension detection
-    if (type === 'image') {
-      handleCloseMenu() // Close BlockMenu first
-      handleOpenImageModal({ blockId: menuInsertPosition.afterBlockId, insertPosition: menuInsertPosition.afterBlockId === null ? 'bottom' : 'after' })
+  // Handle page renaming from Sidebar with optimistic update and error rollback
+  const handleRenamePage = async (pageId: string, newTitle: string): Promise<void> => {
+    // Validate newTitle is non-empty after trim
+    const trimmedTitle = newTitle.trim()
+    if (!trimmedTitle) {
       return
     }
 
-    const newBlockId = generateBlockId()
-
-    const newBlock: Block = {
-      id: newBlockId,
-      type: 'text',
-      content: '',
-      styles: { variant: variant || 'paragraph' }
-    }
-
-    // Insert block at the correct position
-    let updatedBlocks: Block[]
-    if (menuInsertPosition.afterBlockId === null) {
-      // Insert at end (from EmptyBlock)
-      updatedBlocks = [...blocks, newBlock]
-    } else {
-      // Insert after specific block
-      const insertIndex = blocks.findIndex(b => b.id === menuInsertPosition.afterBlockId)
-      if (insertIndex !== -1) {
-        updatedBlocks = [
-          ...blocks.slice(0, insertIndex + 1),
-          newBlock,
-          ...blocks.slice(insertIndex + 1)
-        ]
-      } else {
-        updatedBlocks = [...blocks, newBlock]
-      }
-    }
-
-    // Update page blocks
-    updatePageBlocks(selectedPageId, updatedBlocks)
-    setIsMenuOpen(false)
-  }
-
-  const handleCreateBlockFromEmpty = (content: string, variant: 'h1' | 'h2' | 'h3' | 'paragraph' | 'image') => {
-    if (!selectedPageId) return
-
-    // Image creation from EmptyBlock opens modal
-    if (variant === 'image') {
-      handleOpenImageModal({ blockId: null, insertPosition: 'bottom' })
+    // Find page in pages array by pageId
+    const page = pages.find((p) => p.id === pageId)
+    if (!page) {
+      console.error('Page not found:', pageId)
       return
     }
 
-    const newBlockId = generateBlockId()
+    // Create updated page object
+    const updatedPage = { ...page, title: trimmedTitle }
 
-    const newBlock: Block = {
-      id: newBlockId,
-      type: 'text',
-      content: content,
-      styles: { variant }
+    // Store previous pages for rollback (shallow copy)
+    const previousPages = [...pages]
+
+    // Optimistically update pages state
+    setPages(pages.map((p) => (p.id === pageId ? updatedPage : p)))
+
+    try {
+      // Make PUT request to API
+      const response = await fetch(`/api/pages/${pageId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedPage),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to rename page')
+      }
+    } catch (err) {
+      // Rollback on error
+      setPages(previousPages)
+      // Re-throw error so Sidebar can catch it and show inline error
+      throw err
     }
-
-    const updatedBlocks = [...blocks, newBlock]
-    updatePageBlocks(selectedPageId, updatedBlocks)
   }
 
   // Select block to show Edit/Delete buttons and border
@@ -492,14 +626,6 @@ export default function Home() {
   // Deselect block to hide controls and return to clean view
   const handleDeselectBlock = () => {
     setSelectedBlockId(null)
-  }
-
-  // Deselect block when clicking outside block area
-  const handleMainClick = (e: React.MouseEvent<HTMLElement>) => {
-    // Check if click is outside any block container
-    if (!(e.target as HTMLElement).closest('[data-block-container]')) {
-      handleDeselectBlock()
-    }
   }
 
   // Enter edit mode for main page title on click
@@ -523,25 +649,27 @@ export default function Home() {
       // Revert to original title if empty
       setIsEditingPageTitle(false)
       setEditingPageTitle('')
-      return
-    }
-
-    if (!selectedPageId || trimmedTitle === selectedPage?.title) {
-      // Title unchanged, exit edit mode without API call
-      setIsEditingPageTitle(false)
-      setEditingPageTitle('')
       setPageTitleError(null)
       return
     }
 
-    try {
-      await handleRenamePage(selectedPageId, trimmedTitle)
-      setIsEditingPageTitle(false)
-      setEditingPageTitle('')
-      setPageTitleError(null)
-    } catch (err) {
-      setPageTitleError(err instanceof Error ? err.message : 'Failed to update title')
+    // Only save if changed from original
+    if (trimmedTitle !== selectedPage?.title && selectedPageId) {
+      try {
+        await handleRenamePage(selectedPageId, trimmedTitle)
+        // Clear error on success
+        setPageTitleError(null)
+      } catch (err) {
+        // Keep edit state open on error
+        setPageTitleError(err instanceof Error ? err.message : 'Failed to rename page')
+        return // Don't exit edit mode on error
+      }
     }
+
+    // Exit edit mode only on success or no change
+    setIsEditingPageTitle(false)
+    setEditingPageTitle('')
+    setPageTitleError(null)
   }
 
   // Cancel page title editing without saving
@@ -567,10 +695,111 @@ export default function Home() {
     handlePageTitleSave()
   }
 
+  // Deselect block when clicking outside block area and hide EmptyBlock
+  const handleMainClick = (e: React.MouseEvent<HTMLElement>) => {
+    // Check if click is outside any block container
+    if (!(e.target as HTMLElement).closest('[data-block-container]')) {
+      handleDeselectBlock()
+    }
+
+    // Hide EmptyBlock if clicking outside of it (check if target has data-empty-area or is inside EmptyBlock)
+    const target = e.target as HTMLElement
+    const isEmptyAreaClick = target.hasAttribute('data-empty-area')
+    const isInsideEmptyBlock = target.closest('[data-empty-block]')
+
+    if (!isEmptyAreaClick && !isInsideEmptyBlock && showEmptyBlock) {
+      setShowEmptyBlock(false)
+    }
+  }
+
+  // Handle click on empty area below blocks to show EmptyBlock
+  const handleEmptyAreaClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation() // Prevent triggering main click handler
+    setShowEmptyBlock(true)
+  }
+
+  // Handle page deletion
+  const handleDeletePage = async (pageId: string): Promise<void> => {
+    // Capture snapshot of previous state BEFORE applying optimistic changes
+    const previousPages = [...pages]
+    const previousSelectedPageId = selectedPageId
+
+    // Optimistically remove page from UI
+    const updatedPages = pages.filter((p) => p.id !== pageId)
+    setPages(updatedPages)
+
+    // If deleting the selected page, select another page
+    if (selectedPageId === pageId) {
+      setSelectedPageId(updatedPages.length > 0 ? updatedPages[0].id : null)
+    }
+
+    try {
+      const response = await fetch(`/api/pages/${pageId}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete page')
+      }
+    } catch (err) {
+      // Rollback on error
+      console.error('Failed to delete page:', err)
+      setPages(previousPages)
+      setSelectedPageId(previousSelectedPageId)
+
+      // Surface error to user
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete page'
+      setError(errorMessage)
+
+      // Re-throw to allow sidebar to handle
+      throw err
+    }
+  }
+
+  // Handle page reordering
+  const handleReorderPages = async (newPages: Page[]): Promise<void> => {
+    // Capture snapshot of previous state BEFORE applying optimistic changes
+    const previousPages = [...pages]
+
+    // Optimistically update pages order
+    setPages(newPages)
+
+    try {
+      // Persist all pages with new order
+      const response = await fetch('/api/pages', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPages)
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to reorder pages')
+      }
+    } catch (err) {
+      // Rollback on error
+      console.error('Failed to reorder pages:', err)
+      setPages(previousPages)
+
+      // Surface error to user
+      const errorMessage = err instanceof Error ? err.message : 'Failed to reorder pages'
+      setError(errorMessage)
+
+      // Re-throw to allow sidebar to handle
+      throw err
+    }
+  }
+
+  // Find selected page for title display
+  const selectedPage = pages.find((p) => p.id === selectedPageId)
+
   return (
     // Two-column layout with sidebar
     <div className="flex min-h-screen bg-white dark:bg-notion-dark-bg">
+      {/* Theme toggle button */}
+      <ThemeToggle />
+
       {/* Sidebar integration for page navigation */}
+      {/* Pass rename, delete, and reorder handlers to Sidebar */}
       <Sidebar
         pages={pages}
         selectedPageId={selectedPageId}
@@ -579,35 +808,38 @@ export default function Home() {
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
         onRenamePage={handleRenamePage}
+        onDeletePage={handleDeletePage}
+        onReorderPages={handleReorderPages}
       />
 
       {/* Main content area */}
+      {/* Handle clicks outside blocks for deselection */}
       <main
-        onClick={handleMainClick}
         className={`flex-1 p-8 text-gray-900 dark:text-notion-dark-textSoft ${isSidebarCollapsed ? 'ml-12' : 'ml-64'} transition-all duration-300 ease-in-out`}
+        onClick={handleMainClick}
       >
         {/* Dual loading states for pages and blocks */}
         {pagesLoading && (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-gray-500 dark:text-notion-dark-textMuted">
             <p>Loading pages...</p>
           </div>
         )}
 
         {/* Separate error handling for pages and blocks */}
         {pagesError && (
-          <div className="max-w-3xl mx-auto p-4 bg-red-50 border border-red-200 rounded-lg text-red-900">
+          <div className="max-w-3xl mx-auto p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-900 dark:text-red-200">
             <p>Failed to load pages. Please refresh the page.</p>
-            <p className="mt-2 text-sm text-red-600">{pagesError}</p>
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{pagesError}</p>
           </div>
         )}
 
         {/* Empty state guidance */}
         {!pagesLoading && !pagesError && pages.length === 0 && (
-          <div className="text-center py-12 px-8 text-gray-500 text-lg">
+          <div className="text-center py-12 px-8 text-gray-500 dark:text-notion-dark-textMuted text-lg">
             <p className="mb-4">No pages yet. Create your first page!</p>
             <button
               onClick={handleCreatePage}
-              className="px-6 py-3 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors"
+              className="px-6 py-3 bg-gray-700 dark:bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-800 dark:hover:bg-gray-500 transition-colors"
             >
               + Create Page
             </button>
@@ -619,7 +851,7 @@ export default function Home() {
           <>
             {/* No page selected state */}
             {!selectedPageId ? (
-              <div className="text-center py-12 px-8 text-gray-500 text-lg">
+              <div className="text-center py-12 px-8 text-gray-500 dark:text-notion-dark-textMuted text-lg">
                 <p>Select a page from the sidebar to get started</p>
               </div>
             ) : (
@@ -642,7 +874,7 @@ export default function Home() {
                       }`}
                     />
                     {pageTitleError && (
-                      <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                      <p className="text-sm text-red-600 dark:text-red-400 mt-2 px-2">
                         {pageTitleError}
                       </p>
                     )}
@@ -657,53 +889,72 @@ export default function Home() {
                   </h1>
                 )}
 
+                {/* Divider below title */}
+                <div className="border-b border-gray-200 dark:border-notion-dark-border mb-8"></div>
+
                 {/* Page context propagation to child components */}
                 {selectedPageId && (
                   <>
                     {/* Loading state for page blocks */}
                     {loading && (
-                      <div className="text-center py-8 text-gray-500">
+                      <div className="text-center py-8 text-gray-500 dark:text-notion-dark-textMuted">
                         <p>Loading blocks...</p>
                       </div>
                     )}
 
                     {/* Error state for blocks */}
                     {error && (
-                      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-900">
+                      <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-900 dark:text-red-200">
                         <p>Failed to load blocks. Please try again.</p>
-                        <p className="mt-2 text-sm text-red-600">{error}</p>
+                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
                       </div>
                     )}
 
-                    {/* Success state: render blocks */}
+                    {/* Success state: render blocks with inline creation */}
                     {!loading && !error && (
                       <div className="flex flex-col gap-4">
-                        {blocks.map((block) => (
-                          <div key={block.id} data-block-container>
-                            <BlockComponent
-                              block={block}
-                              onUpdate={handleUpdateBlock}
-                              onDelete={handleDeleteBlock}
-                              onDragStart={handleDragStart}
-                              onDragEnd={handleDragEnd}
-                              onDragOver={handleDragOver}
-                              onDragLeave={handleDragLeave}
-                              onDrop={handleDrop}
-                              isDragging={draggedBlockId === block.id}
-                              isDragOver={dragOverBlockId === block.id}
-                              dropPosition={dragOverBlockId === block.id ? dropPosition : null}
-                              onOpenMenuForBlock={handleOpenMenuForBlock}
-                              isSelected={selectedBlockId === block.id}
-                              onSelect={() => handleSelectBlock(block.id)}
-                            />
-                          </div>
-                        ))}
+                    {/* Render all blocks with inline creation features */}
+                    {/* Pass selection state and handler to each block for clean UX */}
+                    {blocks.map((block) => (
+                      <BlockComponent
+                        key={block.id}
+                        block={block}
+                        onUpdate={handleUpdateBlock}
+                        onDelete={handleDeleteBlock}
+                        onDragStart={handleDragStart}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        isDragging={draggedBlockId === block.id}
+                        isDragOver={dragOverBlockId === block.id}
+                        isSelected={selectedBlockId === block.id}
+                        onSelect={() => handleSelectBlock(block.id)}
+                        dropPosition={dragOverBlockId === block.id ? dropPosition : null}
+                        onInsertBlockAfter={handleInsertBlockAfter}
+                        onOpenMenuForBlock={handleOpenMenuForBlock}
+                        shouldFocus={focusBlockId === block.id}
+                        onFocusComplete={() => setFocusBlockId(null)}
+                      />
+                    ))}
 
-                        {/* Empty block placeholder for creating new content */}
+                    {/* Empty placeholder block at bottom for starting new content */}
+                    {/* Only show when user clicks in empty space */}
+                    {showEmptyBlock ? (
+                      <div data-empty-block>
                         <EmptyBlock
-                          onCreateBlock={handleCreateBlockFromEmpty}
+                          onCreateBlock={handleCreateFromEmpty}
                           onOpenMenu={handleOpenMenuForEmpty}
                         />
+                      </div>
+                    ) : (
+                      <div
+                        data-empty-area
+                        className="min-h-[200px] cursor-text"
+                        onClick={handleEmptyAreaClick}
+                        aria-label="Click to add content"
+                      />
+                    )}
                       </div>
                     )}
                   </>
@@ -714,15 +965,15 @@ export default function Home() {
         )}
       </main>
 
-      {/* Block menu for inline creation */}
+      {/* BlockMenu integration for inline block type selection */}
       {/* Pass image selection handler to open ImageModal */}
       <BlockMenu
-        isOpen={isMenuOpen}
-        position={menuPosition}
+        isOpen={isBlockMenuOpen}
+        position={blockMenuPosition || { x: 0, y: 0 }}
         onSelectType={handleSelectBlockType}
         onSelectImage={() => {
           handleCloseMenu()
-          handleOpenImageModal({ blockId: menuInsertPosition.afterBlockId, insertPosition: menuInsertPosition.afterBlockId === null ? 'bottom' : 'after' })
+          handleOpenImageModal(blockMenuContext)
         }}
         onClose={handleCloseMenu}
       />
