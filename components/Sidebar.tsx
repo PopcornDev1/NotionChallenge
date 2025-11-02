@@ -3,7 +3,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Page } from '@/lib/types'
 
 interface SidebarProps {
@@ -14,6 +14,8 @@ interface SidebarProps {
   isCollapsed: boolean
   onToggleCollapse: () => void
   onRenamePage: (pageId: string, newTitle: string) => Promise<void> // Callback to parent for persisting page title changes
+  onDeletePage: (pageId: string) => Promise<void> // Callback to parent for deleting pages
+  onReorderPages: (newPages: Page[]) => Promise<void> // Callback to parent for reordering pages
 }
 
 export function Sidebar({
@@ -23,12 +25,21 @@ export function Sidebar({
   onCreatePage,
   isCollapsed,
   onToggleCollapse,
-  onRenamePage
+  onRenamePage,
+  onDeletePage,
+  onReorderPages
 }: SidebarProps) {
   // Local state for inline page renaming - only one page can be renamed at a time
   const [editingPageId, setEditingPageId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
+
+  // Drag-and-drop state for page reordering
+  const [draggedPageId, setDraggedPageId] = useState<string | null>(null)
+  const [dragOverPageId, setDragOverPageId] = useState<string | null>(null)
+
+  // Page selection state (for showing delete button)
+  const [selectedForActionPageId, setSelectedForActionPageId] = useState<string | null>(null)
 
   // Enter rename mode on double-click, preserving current title for potential cancel
   const handleDoubleClick = (pageId: string, currentTitle: string) => {
@@ -96,6 +107,64 @@ export function Sidebar({
   const handleTitleBlur = (pageId: string) => {
     handleTitleSave(pageId)
   }
+
+  // Drag-and-drop handlers for page reordering
+  const handleDragStart = (pageId: string) => {
+    setDraggedPageId(pageId)
+  }
+
+  const handleDragEnd = () => {
+    setDraggedPageId(null)
+    setDragOverPageId(null)
+  }
+
+  const handleDragOver = (e: React.DragEvent, pageId: string) => {
+    e.preventDefault()
+    if (draggedPageId && draggedPageId !== pageId) {
+      setDragOverPageId(pageId)
+    }
+  }
+
+  const handleDragLeave = () => {
+    setDragOverPageId(null)
+  }
+
+  const handleDrop = async (targetPageId: string) => {
+    if (!draggedPageId || draggedPageId === targetPageId) {
+      setDraggedPageId(null)
+      setDragOverPageId(null)
+      return
+    }
+
+    const draggedIndex = pages.findIndex((p) => p.id === draggedPageId)
+    const targetIndex = pages.findIndex((p) => p.id === targetPageId)
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedPageId(null)
+      setDragOverPageId(null)
+      return
+    }
+
+    // Reorder pages array
+    const reorderedPages = [...pages]
+    const [draggedPage] = reorderedPages.splice(draggedIndex, 1)
+    reorderedPages.splice(targetIndex, 0, draggedPage)
+
+    setDraggedPageId(null)
+    setDragOverPageId(null)
+
+    // Persist to parent
+    await onReorderPages(reorderedPages)
+  }
+
+  // Handle page deletion
+  const handleDeletePage = async (pageId: string) => {
+    if (window.confirm('Are you sure you want to delete this page?')) {
+      await onDeletePage(pageId)
+      setSelectedForActionPageId(null)
+    }
+  }
+
   return (
     <aside
       className={`
@@ -106,12 +175,12 @@ export function Sidebar({
     >
       {/* Sidebar Header with collapse toggle */}
       <div className="p-4 flex items-center gap-3">
-        {/* Collapse/expand toggle button */}
+        {/* Collapse/expand toggle button - provides collapse functionality */}
         <button
           onClick={onToggleCollapse}
           aria-label="Toggle sidebar"
           role="button"
-          className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 rounded p-1"
+          className="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 dark:focus:ring-gray-500 rounded p-1"
         >
           <span className="text-xl">{isCollapsed ? '→' : '←'}</span>
         </button>
@@ -122,7 +191,7 @@ export function Sidebar({
         )}
       </div>
 
-      {/* Pages List */}
+      {/* Pages List - page list with selection highlighting */}
       {!isCollapsed && (
         <div className="flex-1 overflow-y-auto px-2">
           {pages.length === 0 ? (
@@ -166,21 +235,75 @@ export function Sidebar({
                   </div>
                 ) : (
                   // Double-click to rename, single-click to select page
-                  <button
+                  <div
                     key={page.id}
-                    onClick={() => onSelectPage(page.id)}
-                    onDoubleClick={() => handleDoubleClick(page.id, page.title)}
-                    className={`
-                      w-full text-left px-3 py-2 rounded-lg transition-colors truncate
-                      ${
-                        selectedPageId === page.id
-                          ? 'bg-gray-700 dark:bg-gray-600 text-white'
-                          : 'text-gray-700 dark:text-notion-dark-textSoft hover:bg-gray-200 dark:hover:bg-gray-700'
-                      }
-                    `.trim()}
+                    className={`group flex items-center gap-2 rounded-lg transition-colors ${
+                      selectedForActionPageId === page.id
+                        ? 'bg-gray-100 dark:bg-gray-800'
+                        : ''
+                    } ${
+                      draggedPageId === page.id ? 'opacity-40' : ''
+                    } ${
+                      dragOverPageId === page.id ? 'bg-gray-100 dark:bg-gray-800' : ''
+                    }`}
+                    onDragOver={(e) => handleDragOver(e, page.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={() => handleDrop(page.id)}
                   >
-                    {page.title}
-                  </button>
+                    {/* Drag handle */}
+                    <div
+                      draggable
+                      onDragStart={() => handleDragStart(page.id)}
+                      onDragEnd={handleDragEnd}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!draggedPageId) {
+                          setSelectedForActionPageId(
+                            selectedForActionPageId === page.id ? null : page.id
+                          )
+                        }
+                      }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                      }}
+                      className={`
+                        flex-shrink-0 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 cursor-grab active:cursor-grabbing select-none px-1
+                        ${selectedForActionPageId === page.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
+                      `.trim()}
+                    >
+                      <span className="text-sm">⋮⋮</span>
+                    </div>
+
+                    {/* Page title button */}
+                    <button
+                      onClick={() => onSelectPage(page.id)}
+                      onDoubleClick={() => handleDoubleClick(page.id, page.title)}
+                      className={`
+                        flex-1 text-left px-3 py-2 rounded-lg transition-colors truncate
+                        ${
+                          selectedPageId === page.id
+                            ? 'bg-gray-700 dark:bg-gray-600 text-white'
+                            : 'text-gray-700 dark:text-notion-dark-textSoft hover:bg-gray-200 dark:hover:bg-gray-700'
+                        }
+                      `.trim()}
+                    >
+                      {page.title}
+                    </button>
+
+                    {/* Delete button - only visible when page is selected via drag handle */}
+                    {selectedForActionPageId === page.id && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeletePage(page.id)
+                        }}
+                        className="flex-shrink-0 px-2 py-1 text-sm bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors mr-2"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 )
               })}
             </div>
@@ -189,10 +312,10 @@ export function Sidebar({
           {/* Add New button - appears directly under the pages list */}
           <button
             onClick={onCreatePage}
-            className="w-full text-left px-3 py-2 mt-1 rounded-lg transition-colors text-gray-500 dark:text-notion-dark-textMuted hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-notion-dark-textSoft flex items-center gap-2"
+            className="w-full text-left px-3 py-2 mt-1 rounded-lg transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-2"
           >
             <span className="text-lg">+</span>
-            <span className="text-sm">New Page</span>
+            <span className="text-sm">Add New</span>
           </button>
         </div>
       )}
